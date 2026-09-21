@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONTAINER="llama-local"
+
+if ! docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+    echo "Container '$CONTAINER' does not exist."
+    exit 0
+fi
+
+if docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+    echo "Stopping llama.cpp..."
+    docker stop --time 30 "$CONTAINER" >/dev/null
+    echo "Stopped llama.cpp."
+else
+    echo "Container '$CONTAINER' is already stopped."
+fi
+
+docker rm "$CONTAINER" >/dev/null
+echo "Removed container '$CONTAINER'."

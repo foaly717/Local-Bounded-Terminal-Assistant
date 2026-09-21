@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+
+MODELS_DIR="${LLM_MODELS_DIR:-$PROJECT_DIR/models}"
+IMAGE="ghcr.io/ggml-org/llama.cpp:server"
+
+if [[ ! -d "$MODELS_DIR" ]]; then
+    echo "ERROR: Models directory does not exist: $MODELS_DIR" >&2
+    echo "Set LLM_MODELS_DIR or create a models directory." >&2
+    exit 1
+fi
+
+MEMORY_LIMIT="20g"
+CPU_LIMIT="8"
+THREADS="6"
+CONTEXT="10240"
+MAX_TOKENS="1536"
+API_KEY="${LLM_API_KEY:-local-only-key}"
+
+select_model() {
+    mapfile -t MODELS < <(
+        find "$MODELS_DIR" -maxdepth 1 -type f -name "*.gguf" -printf "%f\n" | sort
+    )
+
+    if [[ ${#MODELS[@]} -eq 0 ]]; then
+        echo "ERROR: No GGUF models found in $MODELS_DIR" >&2
+        exit 1
+    fi
+
+    echo "Available models:"
+    echo
+
+    local i
+    for i in "${!MODELS[@]}"; do
+        printf "[%d] %s\n" "$((i+1))" "${MODELS[$i]}"
+    done
+
+    echo
+    read -rp "Select model [1-${#MODELS[@]}]: " choice
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] ||
+       (( choice < 1 || choice > ${#MODELS[@]} )); then
+        echo "ERROR: Invalid selection" >&2
+        exit 1
+    fi
+
+    MODEL="${MODELS[$((choice-1))]}"
+}
+
+select_model
+
+docker rm -f llama-local >/dev/null 2>&1 || true
+
+docker run -d \
+    --name llama-local \
+    --memory="$MEMORY_LIMIT" \
+    --cpus="$CPU_LIMIT" \
+    --pids-limit=128 \
+    --stop-timeout=30 \
+    --network host \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges:true \
+    --tmpfs /tmp:size=1g,noexec,nosuid \
+    --shm-size=1g \
+    -v "$MODELS_DIR:/models:ro" \
+    "$IMAGE" \
+    -m "/models/$MODEL" \
+    --host 127.0.0.1 \
+    --port 8080 \
+    --api-key "$API_KEY" \
+    -c "$CONTEXT" \
+    -t "$THREADS" \
+    --n-predict "$MAX_TOKENS" \
+    --cache-prompt \
+    -fa  on\
+    --no-webui
+
+echo
+echo "Waiting for llama.cpp..."
+
+for i in {1..60}; do
+    # Updated to match the container's 127.0.0.1 host binding and avoid pipefail SIGPIPEs
+    if docker logs llama-local 2>&1 | grep "127.0.0.1:8080" >/dev/null 2>&1; then
+        echo
+        echo "Started llama.cpp"
+        echo "  model:        $MODEL"
+        echo "  endpoint:     http://127.0.0.1:8080"
+        echo "  memory:       $MEMORY_LIMIT"
+        echo "  CPUs:         $CPU_LIMIT"
+        echo "  threads:      $THREADS"
+        echo "  context:      $CONTEXT"
+        echo "  max tokens:   $MAX_TOKENS"
+        echo "  cache-prompt: enabled"
+        echo "  flash-attn:   enabled"
+        exit 0
+    fi
+
+    if ! docker ps --filter name=llama-local --format '{{.Names}}' | grep -q llama-local; then
+        echo "ERROR: llama.cpp container exited." >&2
+        docker logs llama-local >&2
+        exit 1
+    fi
+
+    sleep 2
+done
+
+echo "ERROR: llama.cpp did not start." >&2
+docker logs --tail 100 llama-local >&2
+exit 1
