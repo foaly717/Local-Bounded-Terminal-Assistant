@@ -39,6 +39,12 @@ CONTROL_SEQUENCE_REGEX = re.compile(
     )
     |
     [\x00-\x08\x0B\x0C\x0E-\x1F\x7F]
+    |
+    [\x80-\x9F]
+    |
+    [\x0D]
+    |
+    [\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]
     """,
     re.VERBOSE,
 )
@@ -253,11 +259,17 @@ def stream_request(payload):
                     )
 
                     if content:
-                        content_received = True
-                        sys.stdout.write(
-                            sanitize_output(content)
-                        )
-                        sys.stdout.flush()
+                        try:
+                            clean_content = sanitize_output(content)
+                            if clean_content:
+                                content_received = True
+                                sys.stdout.write(clean_content)
+                                sys.stdout.flush()
+                        except BrokenPipeError:
+                            devnull = os.open(os.devnull, os.O_WRONLY)
+                            os.dup2(devnull, sys.stdout.fileno())
+                            os.close(devnull)
+                            raise SystemExit(0)
 
                     if choice.get("finish_reason"):
                         finish_reason = choice["finish_reason"]
@@ -274,13 +286,28 @@ def stream_request(payload):
     except urllib.error.URLError as exc:
         die(f"connection error: {exc.reason}")
 
+    except (
+        ConnectionResetError,
+        ConnectionAbortedError,
+        BrokenPipeError,
+        EOFError,
+        OSError,
+    ) as exc:
+        die(f"stream connection failed: {exc}")
+
     except TimeoutError:
         die("request timed out")
 
     except KeyboardInterrupt:
         die("interrupted")
 
-    print()
+    try:
+        print()
+    except BrokenPipeError:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+        raise SystemExit(0)
 
     if server_error:
         print(
@@ -292,6 +319,13 @@ def stream_request(payload):
     if not received_done:
         print(
             "[incomplete stream: missing DONE marker]",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    if not content_received:
+        print(
+            "[error: model returned no content]",
             file=sys.stderr,
         )
         raise SystemExit(1)
