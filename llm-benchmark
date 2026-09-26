@@ -1,0 +1,674 @@
+#!/usr/bin/env python3
+
+import hashlib
+import importlib.util
+import json
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+CLIENT_PATH = SCRIPT_DIR / "llm-client2.py"
+
+RESULTS_ROOT = SCRIPT_DIR / "Benchmark Results"
+BENCHMARK_DIR = RESULTS_ROOT / "benchmarks"
+RESULTS_DIR = RESULTS_ROOT / "results"
+BENCHMARK_PATH = BENCHMARK_DIR / "terminal-v1.json"
+
+HEALTH_URL = "http://127.0.0.1:8080/health"
+PROPS_URL = "http://127.0.0.1:8080/props"
+
+
+def die(message):
+    print(f"ERROR: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def load_client():
+    if not CLIENT_PATH.is_file():
+        die(f"client not found: {CLIENT_PATH}")
+
+    spec = importlib.util.spec_from_file_location(
+        "llm_client2",
+        CLIENT_PATH,
+    )
+
+    if spec is None or spec.loader is None:
+        die(f"could not load client: {CLIENT_PATH}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_benchmark():
+    if not BENCHMARK_PATH.is_file():
+        die(
+            f"benchmark specification not found: {BENCHMARK_PATH}\n"
+            "Create the documentation-derived terminal-v1.json first."
+        )
+
+    try:
+        with BENCHMARK_PATH.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as exc:
+        die(f"invalid benchmark JSON: {exc}")
+
+    if not isinstance(data, dict):
+        die("benchmark specification must be a JSON object")
+
+    if data.get("benchmark_id") != "terminal-v1":
+        die("benchmark specification benchmark_id must be 'terminal-v1'")
+
+    if data.get("version") != 1:
+        die("benchmark specification version must be 1")
+
+    questions = data.get("questions")
+
+    if not isinstance(questions, list):
+        die("benchmark specification is missing questions")
+
+    if not questions:
+        raise ValueError(
+            "terminal-v1 requires at least one question; "
+            "found 0"
+        )
+
+    seen_ids = set()
+
+    for index, question in enumerate(questions, start=1):
+        if not isinstance(question, dict):
+            die(f"question {index} must be an object")
+
+        question_id = question.get("id")
+        prompt = question.get("prompt")
+        evaluation = question.get("evaluation")
+        evidence = question.get("evidence")
+
+        if not isinstance(question_id, str) or not question_id:
+            die(f"question {index} has no valid id")
+
+        if question_id in seen_ids:
+            die(f"duplicate question id: {question_id}")
+
+        seen_ids.add(question_id)
+
+        if not isinstance(prompt, str) or not prompt:
+            die(f"question {question_id} has no prompt")
+
+        if not isinstance(evaluation, dict):
+            die(
+                f"question {question_id} has no evaluation object"
+            )
+
+        method = evaluation.get("method")
+
+        if method not in {
+            "exact",
+            "contains",
+            "structured",
+            "expected_option",
+        }:
+            die(
+                f"question {question_id} has unsupported evaluation "
+                f"method: {method!r}"
+            )
+
+        if "expected" not in evaluation:
+            die(
+                f"question {question_id} has no evaluation.expected"
+            )
+
+        mode = question.get("mode")
+
+        if mode == "evidence_grounded":
+            if not isinstance(evidence, dict):
+                die(
+                    f"question {question_id} must identify its evidence source"
+                )
+
+            if not evidence.get("file"):
+                die(
+                    f"question {question_id} is missing evidence.file"
+                )
+
+    return data
+
+
+def request_json(url, api_key, timeout):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=timeout,
+        ) as response:
+            return json.load(response)
+
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")
+        die(f"{url} returned HTTP {exc.code}: {body}")
+
+    except urllib.error.URLError as exc:
+        die(f"{url} connection error: {exc.reason}")
+
+    except TimeoutError:
+        die(f"{url} request timed out")
+
+    except json.JSONDecodeError:
+        die(f"{url} returned invalid JSON")
+
+
+def get_server_props(client):
+    return request_json(
+        client.PROPS_ENDPOINT,
+        client.API_KEY,
+        client.TIMEOUT_SECONDS,
+    )
+
+
+def get_model_name(props):
+    model_path = props.get("model_path")
+    if not model_path:
+        model_path = props.get("model_alias")
+
+    if not model_path:
+        return "<unknown>"
+
+    return os.path.basename(model_path)
+
+
+def get_context(props):
+    if "n_ctx" in props:
+        return int(props["n_ctx"])
+
+    settings = props.get("default_generation_settings", {})
+
+    if "n_ctx" in settings:
+        return int(settings["n_ctx"])
+
+    die("/props response missing n_ctx")
+
+
+def get_build(props):
+    return props.get("build_info", "<unknown>")
+
+
+def evaluate_exact(response, expected):
+    if not isinstance(expected, str):
+        return False
+
+    return response.strip() == expected.strip()
+
+
+def evaluate_contains(response, expected):
+    if isinstance(expected, str):
+        return expected in response
+
+    if isinstance(expected, list):
+        return all(
+            isinstance(item, str) and item in response
+            for item in expected
+        )
+
+    return False
+
+
+def normalize_text(value):
+    value = value.lower()
+    value = re.sub(r"[^a-z0-9_./-]+", " ", value)
+    return " ".join(value.split())
+
+
+def evaluate_structured(response, expected):
+    if not isinstance(expected, dict):
+        return False
+
+    normalized_response = normalize_text(response)
+
+    required = expected.get("required")
+
+    if not isinstance(required, list):
+        return False
+
+    for item in required:
+        if not isinstance(item, str):
+            return False
+
+        if normalize_text(item) not in normalized_response:
+            return False
+
+    forbidden = expected.get("forbidden", [])
+
+    if not isinstance(forbidden, list):
+        return False
+
+    for item in forbidden:
+        if not isinstance(item, str):
+            return False
+
+        if normalize_text(item) in normalized_response:
+            return False
+
+    return True
+
+
+def evaluate(response, question):
+    method = question["evaluation"]["method"]
+    expected = question["evaluation"]["expected"]
+
+    if method == "exact":
+        return evaluate_exact(response, expected)
+
+    if method == "contains":
+        return evaluate_contains(response, expected)
+
+    if method == "structured":
+        return evaluate_structured(response, expected)
+
+    if method == "expected_option":
+        return evaluate_contains(response, expected)
+
+    return False
+
+
+def stream_request(
+    client,
+    system_prompt,
+    user_prompt,
+    max_tokens,
+):
+    payload = {
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt,
+            },
+            {
+                "role": "user",
+                "content": user_prompt,
+            },
+        ],
+        "temperature": 0.1,
+        "max_tokens": max_tokens,
+        "stream": True,
+        "stream_options": {
+            "include_usage": True,
+        },
+    }
+
+    request = urllib.request.Request(
+        client.ENDPOINT,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {client.API_KEY}",
+        },
+    )
+
+    chunks = []
+    usage = None
+    finish_reason = None
+    received_done = False
+
+    start = time.perf_counter()
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=client.TIMEOUT_SECONDS,
+        ) as response:
+
+            for raw in response:
+                line = raw.decode("utf-8").strip()
+
+                if not line:
+                    continue
+
+                if line == "data: [DONE]":
+                    received_done = True
+                    continue
+
+                if not line.startswith("data: "):
+                    continue
+
+                try:
+                    chunk = json.loads(line[6:])
+                except json.JSONDecodeError:
+                    die("invalid JSON in model stream")
+
+                if "error" in chunk:
+                    die(f"server returned an error: {chunk['error']}")
+
+                choices = chunk.get("choices", [])
+
+                if choices:
+                    choice = choices[0]
+
+                    delta = choice.get("delta", {})
+                    content = delta.get("content", "")
+
+                    if content:
+                        chunks.append(content)
+
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
+
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
+
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")
+        die(f"model request returned HTTP {exc.code}: {body}")
+
+    except urllib.error.URLError as exc:
+        die(f"model connection error: {exc.reason}")
+
+    except TimeoutError:
+        die("model request timed out")
+
+    except KeyboardInterrupt:
+        die("benchmark interrupted")
+
+    elapsed = time.perf_counter() - start
+    response_text = "".join(chunks)
+
+    if not received_done:
+        die("model stream ended without DONE marker")
+
+    if not response_text:
+        die("model returned no content")
+
+    if not usage:
+        die("model response did not provide usage statistics")
+
+    completion_tokens = usage.get("completion_tokens")
+    prompt_tokens = usage.get("prompt_tokens")
+    total_tokens = usage.get("total_tokens")
+
+    if completion_tokens is None:
+        die("model response missing completion_tokens")
+
+    if prompt_tokens is None:
+        die("model response missing prompt_tokens")
+
+    if total_tokens is None:
+        die("model response missing total_tokens")
+
+    if elapsed <= 0:
+        die("invalid elapsed time")
+
+    completion_tps = completion_tokens / elapsed
+
+    return {
+        "response": response_text,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "elapsed_seconds": elapsed,
+        "completion_tokens_per_second": completion_tps,
+        "finish_reason": finish_reason,
+    }
+
+
+def prompt_hash(system_prompt):
+    return hashlib.sha256(
+        system_prompt.encode("utf-8")
+    ).hexdigest()
+
+
+def safe_filename(value):
+    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value)
+    return value.strip("._") or "unknown"
+
+
+def main():
+    client = load_client()
+    benchmark = load_benchmark()
+
+    health = request_json(
+        HEALTH_URL,
+        client.API_KEY,
+        client.TIMEOUT_SECONDS,
+    )
+
+    if health.get("status") != "ok":
+        die(
+            f"llama.cpp health check failed: "
+            f"{health.get('status', '<missing>')}"
+        )
+
+    props = get_server_props(client)
+
+    model = get_model_name(props)
+    context = get_context(props)
+    build = get_build(props)
+
+    system_prompt = client.SYSTEM_PROMPT
+    system_prompt_digest = prompt_hash(system_prompt)
+
+    if client.MAX_TOKENS >= context:
+        die(
+            f"client max tokens {client.MAX_TOKENS} is not below "
+            f"server context {context}"
+        )
+
+    timestamp = datetime.now(timezone.utc)
+    timestamp_text = timestamp.isoformat()
+
+    print(f"Benchmark:       {benchmark['benchmark_id']} v{benchmark['version']}")
+    print(f"Model:           {model}")
+    print(f"llama.cpp build: {build}")
+    print(f"Context:         {context}")
+    print(f"Max output:      {client.MAX_TOKENS}")
+    print(f"Temperature:     0.1")
+    print(f"System prompt:   {system_prompt_digest[:16]}...")
+    print()
+
+    question_results = []
+
+    for index, question in enumerate(
+        benchmark["questions"],
+        start=1,
+    ):
+        print(
+            f"Question {index}/{len(benchmark['questions'])}: {question['id']}",
+            flush=True,
+        )
+
+        result = stream_request(
+            client,
+            system_prompt,
+            question["prompt"],
+            client.MAX_TOKENS,
+        )
+
+        correct = evaluate(
+            result["response"],
+            question,
+        )
+
+        question_result = {
+            "question_id": question["id"],
+            "pair_id": question.get("pair_id"),
+            "command": question.get("command"),
+            "mode": question.get("mode"),
+            "prompt": question["prompt"],
+            "evaluation": question["evaluation"],
+            "evidence": question.get("evidence"),
+            "response": result["response"],
+            "correct": correct,
+            "prompt_tokens": result["prompt_tokens"],
+            "completion_tokens": result["completion_tokens"],
+            "total_tokens": result["total_tokens"],
+            "elapsed_seconds": result["elapsed_seconds"],
+            "completion_tokens_per_second": (
+                result["completion_tokens_per_second"]
+            ),
+            "finish_reason": result["finish_reason"],
+        }
+
+        question_results.append(question_result)
+
+        status = "CORRECT" if correct else "INCORRECT"
+
+        print(f"  Result:       {status}")
+        print(
+            f"  Tokens:       "
+            f"{result['completion_tokens']} completion / "
+            f"{result['total_tokens']} total"
+        )
+        print(
+            f"  Time:         "
+            f"{result['elapsed_seconds']:.2f} s"
+        )
+        print(
+            f"  Throughput:   "
+            f"{result['completion_tokens_per_second']:.1f} completion tok/s"
+        )
+        print()
+
+    correct_count = sum(
+        result["correct"]
+        for result in question_results
+    )
+
+    total_prompt_tokens = sum(
+        result["prompt_tokens"]
+        for result in question_results
+    )
+
+    total_completion_tokens = sum(
+        result["completion_tokens"]
+        for result in question_results
+    )
+
+    total_tokens = sum(
+        result["total_tokens"]
+        for result in question_results
+    )
+
+    total_elapsed = sum(
+        result["elapsed_seconds"]
+        for result in question_results
+    )
+
+    aggregate_tps = (
+        total_completion_tokens / total_elapsed
+        if total_elapsed > 0
+        else 0
+    )
+
+    mean_question_tps = (
+        sum(
+            result["completion_tokens_per_second"]
+            for result in question_results
+        ) / len(question_results)
+    )
+
+    result_document = {
+        "benchmark": benchmark,
+        "execution": {
+            "benchmark_id": benchmark.get("benchmark_id"),
+            "benchmark_version": benchmark.get("version"),
+            "timestamp_utc": timestamp_text,
+            "model": model,
+            "model_path": props.get("model_path"),
+            "model_alias": props.get("model_alias"),
+            "llama_cpp_build": build,
+            "context": context,
+            "max_tokens": client.MAX_TOKENS,
+            "temperature": 0.1,
+            "endpoint": client.ENDPOINT,
+            "system_prompt": system_prompt,
+            "system_prompt_sha256": system_prompt_digest,
+        },
+        "results": question_results,
+        "aggregate": {
+            "questions": len(question_results),
+            "correct": correct_count,
+            "accuracy": correct_count / len(question_results),
+            "prompt_tokens": total_prompt_tokens,
+            "completion_tokens": total_completion_tokens,
+            "total_tokens": total_tokens,
+            "elapsed_seconds": total_elapsed,
+            "completion_tokens_per_second": aggregate_tps,
+            "mean_question_completion_tokens_per_second": (
+                mean_question_tps
+            ),
+        },
+    }
+
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    timestamp_name = timestamp.strftime(
+        "%Y-%m-%dT%H-%M-%SZ"
+    )
+
+    filename = (
+        f"{timestamp_name}__"
+        f"{safe_filename(model)}__"
+        f"{system_prompt_digest[:16]}.json"
+    )
+
+    result_path = RESULTS_DIR / filename
+
+    with result_path.open("w", encoding="utf-8") as f:
+        json.dump(
+            result_document,
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
+        f.write("\n")
+
+    print("Aggregate")
+    print(
+        f"  Correct:             "
+        f"{correct_count}/{len(question_results)}"
+    )
+    print(
+        f"  Accuracy:            "
+        f"{correct_count / len(question_results) * 100:.1f}%"
+    )
+    print(
+        f"  Prompt tokens:       "
+        f"{total_prompt_tokens}"
+    )
+    print(
+        f"  Completion tokens:   "
+        f"{total_completion_tokens}"
+    )
+    print(
+        f"  Total tokens:        "
+        f"{total_tokens}"
+    )
+    print(
+        f"  Total elapsed:       "
+        f"{total_elapsed:.2f} s"
+    )
+    print(
+        f"  Aggregate tok/s:     "
+        f"{aggregate_tps:.1f}"
+    )
+    print(
+        f"  Mean question tok/s: "
+        f"{mean_question_tps:.1f}"
+    )
+    print()
+    print(f"Result: {result_path}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONTAINER="llama-local"
+HEALTH_URL="http://127.0.0.1:8080/health"
+PROPS_URL="http://127.0.0.1:8080/props"
+API_KEY="${LLM_API_KEY:-local-only-key}"
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+command -v docker >/dev/null 2>&1 || fail "docker is not available"
+command -v curl >/dev/null 2>&1 || fail "curl is not available"
+command -v python3 >/dev/null 2>&1 || fail "python3 is not available"
+
+if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    fail "container '$CONTAINER' does not exist"
+fi
+
+running="$(docker inspect --format '{{.State.Running}}' "$CONTAINER")"
+if [[ "$running" != "true" ]]; then
+    fail "container '$CONTAINER' exists but is not running"
+fi
+
+health="$(curl -fsS --max-time 5 "$HEALTH_URL")" || \
+    fail "llama.cpp health endpoint failed"
+
+props="$(curl -fsS --max-time 5 \
+    -H "Authorization: Bearer ${API_KEY}" \
+    "$PROPS_URL")" || \
+    fail "llama.cpp /props endpoint failed or authentication was rejected"
+
+cmd_json="$(docker inspect --format '{{json .Config.Cmd}}' "$CONTAINER")" || \
+    fail "could not inspect running container command"
+
+nano_cpus="$(docker inspect --format '{{.HostConfig.NanoCpus}}' "$CONTAINER")" || \
+    fail "could not inspect container CPU limit"
+
+export PROPS_JSON="$props"
+export CMD_JSON="$cmd_json"
+export NANO_CPUS="$nano_cpus"
+export HEALTH_JSON="$health"
+
+python3 <<'PY'
+import json
+import os
+import sys
+
+try:
+    health = json.loads(os.environ["HEALTH_JSON"])
+    props = json.loads(os.environ["PROPS_JSON"])
+    cmd = json.loads(os.environ["CMD_JSON"])
+    nano_cpus = int(os.environ["NANO_CPUS"])
+except (json.JSONDecodeError, KeyError, ValueError) as exc:
+    print(f"ERROR: invalid server/container inspection data: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+if health.get("status") != "ok":
+    print(
+        f"ERROR: llama.cpp health check returned unexpected status: "
+        f"{health.get('status', '<missing>')}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+if not isinstance(cmd, list):
+    print("ERROR: container command is not a JSON array", file=sys.stderr)
+    raise SystemExit(1)
+
+def cmd_value(flag, required=True):
+    try:
+        index = cmd.index(flag)
+        return cmd[index + 1]
+    except (ValueError, IndexError):
+        if required:
+            print(
+                f"ERROR: running container command is missing {flag}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        return None
+
+def enabled_flag(flag):
+    return flag in cmd
+
+model_path = props.get("model_path") or props.get("model_alias")
+model = os.path.basename(model_path) if model_path else "<unknown>"
+
+generation = props.get("default_generation_settings", {})
+context = generation.get("n_ctx")
+
+threads = cmd_value("-t")
+memory = cmd_value("--memory", required=False)
+max_tokens = cmd_value("--n-predict", required=False)
+
+if nano_cpus > 0:
+    cpu_limit = nano_cpus / 1_000_000_000
+    cpu_limit_text = f"{cpu_limit:g}"
+else:
+    cpu_limit_text = "unlimited"
+
+cache_prompt = enabled_flag("--cache-prompt")
+
+flash_attn = None
+try:
+    flash_index = cmd.index("-fa")
+    flash_attn = cmd[flash_index + 1]
+except (ValueError, IndexError):
+    pass
+
+slots = props.get("total_slots")
+build = props.get("build_info")
+
+print("LLM server")
+print(f"  Health:       healthy")
+print(f"  Model:        {model}")
+print(f"  Tokens:       {max_tokens if max_tokens is not None else '<not configured>'}")
+print(f"  Context:      {context if context is not None else '<not reported>'}")
+print(f"  CPUs:         {threads} threads / {cpu_limit_text} CPU limit")
+
+if memory is not None:
+    print(f"  Memory:       {memory}")
+
+if cache_prompt:
+    print("  Cache-prompt: enabled")
+else:
+    print("  Cache-prompt: disabled")
+
+if flash_attn is not None:
+    print(f"  Flash-attn:   {flash_attn}")
+
+if slots is not None:
+    print(f"  Slots:        {slots}")
+
+if build is not None:
+    print(f"  Build:        {build}")
+
+print("  GPU:          not reported by /props")
+PY

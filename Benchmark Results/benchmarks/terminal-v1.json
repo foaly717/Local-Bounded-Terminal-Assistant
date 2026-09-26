@@ -1,0 +1,196 @@
+{
+  "benchmark_id": "terminal-v1",
+  "version": 1,
+  "description": "Paired general-knowledge and evidence-grounded terminal command questions. Each pair asks the same semantic question, with the evidence-grounded variant providing authoritative local command help.",
+  "questions": [
+    {
+      "id": "grep-general",
+      "pair_id": "grep",
+      "command": "grep",
+      "mode": "general_knowledge",
+      "prompt": "Which grep option supplies NUM lines of context before each matching line? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-B"
+      }
+    },
+    {
+      "id": "grep-evidence",
+      "pair_id": "grep",
+      "command": "grep",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the grep --help output provided below, which option supplies NUM lines of context before each matching line? Give the option and command syntax.",
+      "evidence": {
+        "command": "grep --help",
+        "source": "local_command_help",
+        "file": "evidence/grep-help.txt"
+      },
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-B"
+      }
+    },
+    {
+      "id": "tar-general",
+      "pair_id": "tar",
+      "command": "tar",
+      "mode": "general_knowledge",
+      "prompt": "Which tar option changes to a specified directory before performing the archive operation? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-C"
+      }
+    },
+    {
+      "id": "tar-evidence",
+      "pair_id": "tar",
+      "command": "tar",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the tar --help output provided below, which option changes to a specified directory before performing the archive operation? Give the option and command syntax.",
+      "evidence": {
+        "command": "tar --help",
+        "source": "local_command_help",
+        "file": "evidence/tar-help.txt"
+      },
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-C"
+      }
+    },
+    {
+      "id": "find-general",
+      "pair_id": "find",
+      "command": "find",
+      "mode": "general_knowledge",
+      "prompt": "Which find option limits the search to a specified maximum directory depth? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-maxdepth"
+      }
+    },
+    {
+      "id": "find-evidence",
+      "pair_id": "find",
+      "command": "find",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the find --help output provided below, which option limits the search to a specified maximum directory depth? Give the option and command syntax.",
+      "evidence": {
+        "command": "find --help",
+        "source": "local_command_help",
+        "file": "evidence/find-help.txt"
+      },
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-maxdepth"
+      }
+    },
+    {
+      "id": "sed-general",
+      "pair_id": "sed",
+      "command": "sed",
+      "mode": "general_knowledge",
+      "prompt": "Which sed option edits the input files in place instead of writing the modified text only to standard output? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-i"
+      }
+    },
+    {
+      "id": "sed-evidence",
+      "pair_id": "sed",
+      "command": "sed",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the sed --help output provided below, which option edits the input files in place instead of writing the modified text only to standard output? Give the option and command syntax.",
+      "evidence": {
+        "command": "sed --help",
+        "source": "local_command_help",
+        "file": "evidence/sed-help.txt"
+      },
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-i"
+      }
+    },
+    {
+      "id": "curl-general",
+      "pair_id": "curl",
+      "command": "curl",
+      "mode": "general_knowledge",
+      "prompt": "Which curl option specifies the HTTP request method to use? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-X"
+      }
+    },
+    {
+      "id": "curl-evidence",
+      "pair_id": "curl",
+      "command": "curl",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the curl --help output provided below, which option specifies the request method to use? Give the option and command syntax.",
+      "evidence": {
+        "command": "curl --help",
+        "source": "local_command_help",
+        "file": "evidence/curl-help.txt"
+      },
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-X"
+      }
+    },
+    {
+      "id": "git-general",
+      "pair_id": "git",
+      "command": "git",
+      "mode": "general_knowledge",
+      "prompt": "Which git option causes Git to run as if it were started in a specified directory? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-C"
+      }
+    },
+    {
+      "id": "git-evidence",
+      "pair_id": "git",
+      "command": "git",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the git --help output provided below, which option causes Git to run as if it were started in a specified directory? Give the option and command syntax.",
+      "evidence": {
+        "command": "git --help",
+        "source": "local_command_help",
+        "file": "evidence/git-help.txt"
+      },
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-C"
+      }
+    },
+    {
+      "id": "ffmpeg-general",
+      "pair_id": "ffmpeg",
+      "command": "ffmpeg",
+      "mode": "general_knowledge",
+      "prompt": "Which ffmpeg option prevents existing output files from being overwritten? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-n"
+      }
+    },
+    {
+      "id": "ffmpeg-evidence",
+      "pair_id": "ffmpeg",
+      "command": "ffmpeg",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the ffmpeg -h output provided below, which option prevents existing output files from being overwritten? Give the option and command syntax.",
+      "evidence": {
+        "command": "ffmpeg -h",
+        "source": "local_command_help",
+        "file": "evidence/ffmpeg-help.txt"
+      },
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-n"
+      }
+    }
+  ]
+}
