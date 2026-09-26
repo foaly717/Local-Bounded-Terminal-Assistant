@@ -1,0 +1,198 @@
+# Platform Compatibility
+
+The Local Bounded Terminal Assistant is developed primarily for Linux. With tweaks, it'll run on MacOS. Windows + WSL2 may require more extensive modification. 
+
+The core client and benchmark components are intentionally portable: they communicate with `llama.cpp` through its OpenAI-compatible HTTP API and use Python's standard library. The platform-specific portion is primarily the launcher and local container runtime.
+
+This document describes the expected adjustments for other operating systems.
+
+## Linux
+
+Linux is the native development and test environment.
+
+The documented workflow is:
+
+```text
+llm-start
+    |
+    v
+Docker / llama.cpp
+    |
+    +---- llm-ask6
+    |
+    +---- llm-benchmark
+    |
+    v
+llm-status / llm-stop
+```
+
+No platform-specific changes should normally be required.
+
+## macOS
+
+macOS should work with the project with relatively minor adjustments.
+
+The recommended approach is to use Docker Desktop and run the project from a normal macOS terminal.
+
+Potential adjustments include:
+
+### Docker
+
+Install and start Docker Desktop before running `llm-start`.
+
+The project expects the `llama.cpp` server container to be available through Docker.
+
+### Paths
+
+If using a custom model directory, set `LLM_MODELS_DIR` to a valid macOS path:
+
+```bash
+export LLM_MODELS_DIR="/path/to/models"
+```
+
+The model directory must be accessible to Docker Desktop.
+
+### Apple Silicon
+
+Apple Silicon Macs can run the x86-64 container through Docker's compatibility mechanisms, but this may have different performance characteristics from native Apple Silicon execution.
+
+The current launcher is not specifically designed around Metal or native Apple GPU acceleration.
+
+The benchmark and client do not depend on GPU-specific functionality.
+
+### Shell
+
+The project uses Bash shell scripts. Use a normal macOS terminal environment with Bash available.
+
+## Windows + WSL2
+
+For Windows, the recommended environment is WSL2 rather than native Windows execution.
+
+Install:
+
+* Windows Subsystem for Linux 2
+* A Linux distribution such as Ubuntu
+* Docker Desktop
+* Docker Desktop's WSL2 integration
+
+Then run the project from the Linux environment inside WSL2.
+
+Conceptually:
+
+```text
+Windows
+   |
+   v
+WSL2 / Linux
+   |
+   +---- llm-start
+   +---- llm-stop
+   +---- llm-status
+   +---- llm-ask6
+   +---- llm-benchmark
+   |
+   v
+Docker Desktop
+   |
+   v
+llama.cpp
+```
+
+### Project location
+
+For the least friction, keep the repository in the WSL2 Linux filesystem rather than under a Windows-mounted path such as `/mnt/c`.
+
+For example:
+
+```bash
+~/Local-Bounded-Terminal-Assistant
+```
+
+This avoids unnecessary filesystem and permission differences.
+
+### Docker
+
+Configure Docker Desktop to use the WSL2 backend and enable integration with the Linux distribution being used.
+
+Run the project from WSL2:
+
+```bash
+./llm-start
+./llm-status
+./llm-ask6 "your prompt here"
+./llm-benchmark
+./llm-stop
+```
+
+The project should otherwise behave similarly to its Linux environment.
+
+### Windows paths
+
+When configuring `LLM_MODELS_DIR`, use a path that is valid from the environment in which the launcher is running.
+
+For example, a Windows directory such as:
+
+```text
+C:\Users\username\models
+```
+
+is normally exposed inside WSL2 using a path such as:
+
+```bash
+/mnt/c/Users/username/models
+```
+
+However, keeping model files in the WSL2 filesystem may provide a simpler and more predictable setup.
+
+## Windows native
+
+Native Windows execution is not currently supported.
+
+The project relies on a Unix-oriented runtime environment including Bash, Unix filesystem semantics, and the current Docker-based launcher.
+
+If you are running Windows and do not want to use WSL2, this is currently the wrong project for that environment.
+
+Use WSL2 or a Linux system instead.
+
+## What is portable?
+
+The platform boundary is intentionally narrow.
+
+The following components are largely platform-independent:
+
+* `llm-client2.py`
+* `llm-benchmark`
+* benchmark definitions
+* benchmark evidence
+* benchmark result JSON
+* communication with the OpenAI-compatible `llama.cpp` API
+
+The following components are more platform-dependent:
+
+* `llm-start`
+* `llm-stop`
+* `llm-status`
+* Docker configuration
+* filesystem paths
+* shell and terminal behavior
+
+This means adding another supported Unix-like environment should generally require changes around the launcher and runtime rather than a separate implementation of the client or benchmark system.
+
+## Support terminology
+
+Platform compatibility in this document has three practical levels:
+
+**Native:** The project is developed and tested directly on the platform.
+
+**Adaptable:** The architecture should work, but platform-specific configuration or adjustments may be required.
+
+**Unsupported:** The current project does not provide the required native runtime environment.
+
+Current status:
+
+| Environment    | Status      |
+| -------------- | ----------- |
+| Linux          | Native      |
+| macOS          | Adaptable   |
+| Windows + WSL2 | Adaptable   |
+| Windows native | Unsupported |
