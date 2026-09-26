@@ -22,6 +22,8 @@ The Python client uses only the Python standard library.
 * A compatible GGUF model
 * The `ghcr.io/ggml-org/llama.cpp:server` container image
 
+See COMPATIBILITY.md for OS/ platform-specific setup and limitations.
+
 ## Model setup
 
 By default, `llm-start` looks for GGUF models in the repository-relative `models/` directory.
