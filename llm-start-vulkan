@@ -1,0 +1,537 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ==============================================================================
+# llama.cpp local Vulkan server launcher
+# ==============================================================================
+#
+# DESIGN CONTRACT
+# --------------
+#
+#   HOST
+#     |
+#     | 127.0.0.1:8080 only
+#     | Docker port publishing
+#     v
+#   llama-local
+#     |
+#     | llama-isolated Docker network
+#     | --internal
+#     X
+#   INTERNET
+#
+# Security properties:
+#   1. API reachable from host.
+#   2. API published only on host loopback.
+#   3. Container has no outbound Internet connectivity.
+#   4. Model files are read-only.
+#   5. Container root filesystem is read-only.
+#   6. Unnecessary Linux capabilities are dropped.
+#   7. Privilege escalation is disabled.
+#   8. Vulkan uses explicitly supplied DRM devices and Vulkan0.
+#   9. Temporary writable state is ephemeral and bounded.
+#  10. Startup fails if the resulting configuration violates these constraints.
+#
+# Docker --internal provides outbound isolation.
+# Docker port publishing provides host access.
+# socat is intentionally not used.
+#
+# ==============================================================================
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
+
+MODELS_DIR="${LLM_MODELS_DIR:-$PROJECT_DIR/models}"
+
+IMAGE="ghcr.io/ggml-org/llama.cpp:server-vulkan"
+CONTAINER="llama-local"
+NETWORK="llama-isolated"
+
+HOST_ADDRESS="127.0.0.1"
+HOST_PORT="8080"
+CONTAINER_PORT="8080"
+
+MEMORY_LIMIT="20g"
+CPU_LIMIT="8"
+
+THREADS="6"
+CONTEXT="10240"
+MAX_TOKENS="1536"
+GPU_LAYERS="99"
+VULKAN_DEVICE="Vulkan0"
+
+API_KEY="${LLM_API_KEY:-local-only-key}"
+
+# ==============================================================================
+# REQUIRED HOST PREREQUISITES
+# ==============================================================================
+
+if [[ ! -d "$MODELS_DIR" ]]; then
+    echo "ERROR: Models directory does not exist: $MODELS_DIR" >&2
+    echo "Set LLM_MODELS_DIR or create a models directory." >&2
+    exit 1
+fi
+
+if [[ ! -e /dev/dri/renderD128 ]]; then
+    echo "ERROR: Vulkan render device does not exist: /dev/dri/renderD128" >&2
+    exit 1
+fi
+
+if [[ ! -e /dev/dri/card1 ]]; then
+    echo "ERROR: DRM device does not exist: /dev/dri/card1" >&2
+    exit 1
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+    echo "ERROR: curl is required but was not found." >&2
+    exit 1
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+    echo "ERROR: docker is required but was not found." >&2
+    exit 1
+fi
+
+# ==============================================================================
+# MODEL SELECTION
+# ==============================================================================
+
+select_model() {
+    mapfile -t MODELS < <(
+        find -L "$MODELS_DIR" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.gguf" \
+            -printf "%f\n" |
+        sort
+    )
+
+    if [[ ${#MODELS[@]} -eq 0 ]]; then
+        echo "ERROR: No GGUF models found in $MODELS_DIR" >&2
+        exit 1
+    fi
+
+    echo "Available models:" >&2
+    echo >&2
+
+    local i
+    for i in "${!MODELS[@]}"; do
+        printf "[%d] %s\n" "$((i + 1))" "${MODELS[$i]}" >&2
+    done
+
+    echo >&2
+    read -rp "Select model [1-${#MODELS[@]}]: " choice
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: Invalid selection" >&2
+        exit 1
+    fi
+
+    if (( choice < 1 || choice > ${#MODELS[@]} )); then
+        echo "ERROR: Invalid selection" >&2
+        exit 1
+    fi
+
+    MODEL="${MODELS[$((choice - 1))]}"
+}
+
+select_model
+
+# ==============================================================================
+# MODEL-SPECIFIC ARGUMENTS
+# ==============================================================================
+
+REASONING_ARGS=()
+
+case "$MODEL" in
+    *Qwen3*)
+        REASONING_ARGS=(
+            --reasoning
+            on
+            --reasoning-format
+            deepseek
+        )
+        ;;
+esac
+
+# ==============================================================================
+# DOCKER NETWORK
+# ==============================================================================
+
+if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
+    echo "Creating internal Docker network: $NETWORK"
+    docker network create \
+        --driver bridge \
+        --internal \
+        "$NETWORK" >/dev/null
+fi
+
+NETWORK_INTERNAL="$(
+    docker network inspect \
+        --format '{{.Internal}}' \
+        "$NETWORK"
+)"
+
+if [[ "$NETWORK_INTERNAL" != "true" ]]; then
+    echo "ERROR: Docker network '$NETWORK' is not internal." >&2
+    echo "Refusing to start llama.cpp because outbound network isolation" >&2
+    echo "cannot be established by this launcher." >&2
+    exit 1
+fi
+
+# ==============================================================================
+# REPLACE ANY PREVIOUS CONTAINER
+# ==============================================================================
+
+docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+
+# ==============================================================================
+# DOCKER CONTAINER ARGUMENTS
+# ==============================================================================
+
+DOCKER_ARGS=(
+    run
+    -d
+
+    --name "$CONTAINER"
+
+    # Resource limits.
+    --memory="$MEMORY_LIMIT"
+    --cpus="$CPU_LIMIT"
+    --pids-limit=128
+    --stop-timeout=30
+
+    # Exactly one internal network; host API is loopback-only.
+    --network "$NETWORK"
+    -p "${HOST_ADDRESS}:${HOST_PORT}:${CONTAINER_PORT}"
+
+    # Read-only root with bounded ephemeral writable areas.
+    --read-only
+    --tmpfs /tmp:size=1g,noexec,nosuid
+    --tmpfs /root/.cache:size=256m,nosuid
+    --shm-size=1g
+
+    # Drop capabilities and prevent privilege escalation.
+    --cap-drop=ALL
+    --security-opt=no-new-privileges:true
+
+    # Explicit DRM devices required by Vulkan.
+    --device /dev/dri/renderD128:/dev/dri/renderD128
+    --device /dev/dri/card1:/dev/dri/card1
+
+    # Model data is read-only.
+    -v "$MODELS_DIR:/models:ro"
+
+    "$IMAGE"
+
+    # llama.cpp configuration.
+    -m "/models/$MODEL"
+    --host 0.0.0.0
+    --port "$CONTAINER_PORT"
+    --api-key "$API_KEY"
+
+    # Inference configuration.
+    -c "$CONTEXT"
+    -t "$THREADS"
+    -tb "$THREADS"
+    --n-gpu-layers "$GPU_LAYERS"
+
+    # Explicitly select the Vulkan device.
+    --device "$VULKAN_DEVICE"
+
+    --n-predict "$MAX_TOKENS"
+    --cache-prompt
+    -fa
+    on
+)
+
+DOCKER_ARGS+=("${REASONING_ARGS[@]}")
+DOCKER_ARGS+=(--no-webui)
+
+# ==============================================================================
+# START CONTAINER
+# ==============================================================================
+
+docker "${DOCKER_ARGS[@]}"
+
+echo
+echo "Waiting for llama.cpp..."
+
+# ==============================================================================
+# STARTUP VALIDATION
+# ==============================================================================
+
+STARTED=false
+
+for i in {1..60}; do
+    if ! docker ps \
+        --filter "name=$CONTAINER" \
+        --format '{{.Names}}' |
+        grep -qx "$CONTAINER"; then
+
+        echo "ERROR: llama.cpp container exited." >&2
+        docker logs "$CONTAINER" >&2
+        exit 1
+    fi
+
+    if docker logs "$CONTAINER" 2>&1 |
+        grep -q "0.0.0.0:${CONTAINER_PORT}"; then
+
+        STARTED=true
+        break
+    fi
+
+    sleep 2
+done
+
+if [[ "$STARTED" != true ]]; then
+    echo "ERROR: llama.cpp did not start within the expected time." >&2
+    docker logs --tail 100 "$CONTAINER" >&2
+    exit 1
+fi
+
+# ==============================================================================
+# NETWORK CONFIGURATION VALIDATION
+# ==============================================================================
+
+echo
+echo "Validating network isolation..."
+
+NETWORK_COUNT="$(
+    docker inspect "$CONTAINER" \
+        --format '{{len .NetworkSettings.Networks}}'
+)"
+
+if [[ "$NETWORK_COUNT" != "1" ]]; then
+    echo "ERROR: Expected exactly one Docker network; found $NETWORK_COUNT." >&2
+    docker inspect "$CONTAINER" \
+        --format '{{json .NetworkSettings.Networks}}' >&2
+    exit 1
+fi
+
+ATTACHED_NETWORK="$(
+    docker inspect "$CONTAINER" \
+        --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}'
+)"
+
+if [[ "$ATTACHED_NETWORK" != "$NETWORK" ]]; then
+    echo "ERROR: Container is attached to unexpected network: $ATTACHED_NETWORK" >&2
+    exit 1
+fi
+
+PORT_BINDINGS="$(
+    docker inspect "$CONTAINER" \
+        --format '{{json .HostConfig.PortBindings}}'
+)"
+
+EXPECTED_PORT_BINDING='{"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":"8080"}]}'
+
+if [[ "$PORT_BINDINGS" != "$EXPECTED_PORT_BINDING" ]]; then
+    echo "ERROR: Unexpected Docker port binding." >&2
+    echo "Expected: $EXPECTED_PORT_BINDING" >&2
+    echo "Actual:   $PORT_BINDINGS" >&2
+    exit 1
+fi
+
+# ==============================================================================
+# FILESYSTEM / PRIVILEGE VALIDATION
+# ==============================================================================
+
+READ_ONLY="$(
+    docker inspect "$CONTAINER" \
+        --format '{{.HostConfig.ReadonlyRootfs}}'
+)"
+
+if [[ "$READ_ONLY" != "true" ]]; then
+    echo "ERROR: Container root filesystem is not read-only." >&2
+    exit 1
+fi
+
+CAP_DROP="$(
+    docker inspect "$CONTAINER" \
+        --format '{{json .HostConfig.CapDrop}}'
+)"
+
+if [[ "$CAP_DROP" != '["ALL"]' ]]; then
+    echo "ERROR: Container does not have the expected capability drop." >&2
+    echo "Actual: $CAP_DROP" >&2
+    exit 1
+fi
+
+SECURITY_OPT="$(
+    docker inspect "$CONTAINER" \
+        --format '{{json .HostConfig.SecurityOpt}}'
+)"
+
+if ! grep -q '"no-new-privileges:true"' <<<"$SECURITY_OPT"; then
+    echo "ERROR: no-new-privileges is not enabled." >&2
+    echo "Actual: $SECURITY_OPT" >&2
+    exit 1
+fi
+
+# ==============================================================================
+# VULKAN DEVICE VALIDATION
+# ==============================================================================
+
+echo "Validating Vulkan device..."
+
+DEVICE_LIST="$(
+    docker exec "$CONTAINER" \
+        /app/llama-server \
+        --list-devices 2>&1
+)"
+
+if ! grep -Fq "${VULKAN_DEVICE}:" <<<"$DEVICE_LIST"; then
+    echo "ERROR: Expected Vulkan device '$VULKAN_DEVICE' is unavailable." >&2
+    printf '%s\n' "$DEVICE_LIST" >&2
+    exit 1
+fi
+
+PROCESS_CMDLINE="$(
+    docker exec "$CONTAINER" \
+        sh -c 'tr "\0" " " < /proc/1/cmdline'
+)"
+
+if ! grep -Fq -- "--device ${VULKAN_DEVICE}" <<<"$PROCESS_CMDLINE"; then
+    echo "ERROR: Running llama.cpp process is not configured for ${VULKAN_DEVICE}." >&2
+    echo "Actual command line:" >&2
+    printf '%s\n' "$PROCESS_CMDLINE" >&2
+    exit 1
+fi
+
+# ==============================================================================
+# HOST API VALIDATION
+# ==============================================================================
+
+echo "Waiting for host endpoint..."
+
+HOST_ENDPOINT_READY=false
+
+for i in {1..15}; do
+    if curl \
+        -fsS \
+        --max-time 2 \
+        -H "Authorization: Bearer $API_KEY" \
+        "http://${HOST_ADDRESS}:${HOST_PORT}/health" \
+        >/dev/null 2>&1; then
+
+        HOST_ENDPOINT_READY=true
+        break
+    fi
+
+    sleep 1
+done
+
+if [[ "$HOST_ENDPOINT_READY" != true ]]; then
+    echo "ERROR: llama.cpp is not reachable through ${HOST_ADDRESS}:${HOST_PORT}." >&2
+    docker logs --tail 100 "$CONTAINER" >&2
+    exit 1
+fi
+
+# ==============================================================================
+# FINAL CONFIGURATION REPORT
+# ==============================================================================
+
+echo
+echo "Started llama.cpp with Vulkan GPU offload"
+echo
+echo "  model:          $MODEL"
+echo "  endpoint:       http://${HOST_ADDRESS}:${HOST_PORT}"
+echo "  image:          $IMAGE"
+echo "  network:        $NETWORK (internal)"
+echo "  outbound net:   BLOCKED by Docker internal network"
+echo "  host exposure:  LOOPBACK ONLY"
+echo "  Vulkan device:  $VULKAN_DEVICE"
+echo "  memory:         $MEMORY_LIMIT"
+echo "  CPUs:            $CPU_LIMIT"
+echo "  threads:         $THREADS"
+echo "  context:         $CONTEXT"
+echo "  max tokens:      $MAX_TOKENS"
+echo "  GPU layers:      $GPU_LAYERS"
+echo "  cache-prompt:    enabled"
+echo "  flash-attn:      enabled"
+echo "  reasoning:       ${REASONING_ARGS[*]:-disabled}"
+echo "  web UI:          disabled"
+echo "  root filesystem: read-only"
+echo "  model mount:     read-only"
+echo "  capabilities:    ALL dropped"
+echo "  privilege gain:  disabled"
+
+echo
+echo "Vulkan device:"
+printf '%s\n' "$DEVICE_LIST" |
+    grep -F "${VULKAN_DEVICE}:" |
+    head -n 1
+
+# ==============================================================================
+# FINAL SUCCESS ASSERTIONS
+# ==============================================================================
+
+FINAL_NETWORK_INTERNAL="$(
+    docker network inspect "$NETWORK" \
+        --format '{{.Internal}}'
+)"
+
+FINAL_PORT_BINDINGS="$(
+    docker inspect "$CONTAINER" \
+        --format '{{json .HostConfig.PortBindings}}'
+)"
+
+FINAL_READ_ONLY="$(
+    docker inspect "$CONTAINER" \
+        --format '{{.HostConfig.ReadonlyRootfs}}'
+)"
+
+FINAL_PROCESS_CMDLINE="$(
+    docker exec "$CONTAINER" \
+        sh -c 'tr "\0" " " < /proc/1/cmdline'
+)"
+
+if [[ "$FINAL_NETWORK_INTERNAL" != "true" ]]; then
+    echo "ERROR: FINAL CHECK FAILED: network is not internal." >&2
+    exit 1
+fi
+
+if [[ "$FINAL_PORT_BINDINGS" != "$EXPECTED_PORT_BINDING" ]]; then
+    echo "ERROR: FINAL CHECK FAILED: host port is not loopback-only." >&2
+    exit 1
+fi
+
+if [[ "$FINAL_READ_ONLY" != "true" ]]; then
+    echo "ERROR: FINAL CHECK FAILED: root filesystem is writable." >&2
+    exit 1
+fi
+
+if ! grep -Fq -- "--device ${VULKAN_DEVICE}" <<<"$FINAL_PROCESS_CMDLINE"; then
+    echo "ERROR: FINAL CHECK FAILED: Vulkan device is not explicitly selected." >&2
+    exit 1
+fi
+
+if ! curl \
+    -fsS \
+    --max-time 2 \
+    -H "Authorization: Bearer $API_KEY" \
+    "http://${HOST_ADDRESS}:${HOST_PORT}/health" \
+    >/dev/null; then
+
+    echo "ERROR: FINAL CHECK FAILED: host API health check failed." >&2
+    exit 1
+fi
+
+echo
+echo "Validation successful."
+echo "  API reachable:       yes"
+echo "  host binding:        127.0.0.1:${HOST_PORT}"
+echo "  Docker network:      ${NETWORK}"
+echo "  network internal:    yes"
+echo "  outbound isolation:  enforced by internal network"
+echo "  Vulkan device:       ${VULKAN_DEVICE}"
+echo "  Vulkan selection:    explicit"
+echo "  root filesystem:     read-only"
+echo "  model filesystem:    read-only"
+echo "  capabilities:        dropped"
+echo "  no-new-privileges:   enabled"
