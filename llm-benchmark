@@ -476,6 +476,7 @@ def main():
     print(f"System prompt:   {system_prompt_digest[:16]}...")
     print()
 
+    benchmark_start = time.perf_counter()
     question_results = []
 
     for index, question in enumerate(
@@ -539,6 +540,8 @@ def main():
         )
         print()
 
+    benchmark_elapsed_seconds = time.perf_counter() - benchmark_start
+
     correct_count = sum(
         result["correct"]
         for result in question_results
@@ -578,6 +581,14 @@ def main():
     )
 
     result_document = {
+        "summary": {
+            "correct": correct_count,
+            "questions": len(question_results),
+            "prompt_tokens": total_prompt_tokens,
+            "completion_tokens": total_completion_tokens,
+            "total_tokens": total_tokens,
+            "benchmark_elapsed_seconds": benchmark_elapsed_seconds,
+        },
         "benchmark": benchmark,
         "execution": {
             "benchmark_id": benchmark.get("benchmark_id"),

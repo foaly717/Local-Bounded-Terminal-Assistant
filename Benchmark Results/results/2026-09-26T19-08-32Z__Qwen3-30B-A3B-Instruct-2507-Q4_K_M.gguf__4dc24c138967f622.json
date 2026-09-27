@@ -1,0 +1,542 @@
+{
+  "summary": {
+    "correct": 11,
+    "questions": 14,
+    "prompt_tokens": 3536,
+    "completion_tokens": 1036,
+    "total_tokens": 4572,
+    "benchmark_elapsed_seconds": 139.88973171217367
+  },
+  "benchmark": {
+    "benchmark_id": "terminal-v1",
+    "version": 1,
+    "description": "Paired general-knowledge and evidence-grounded terminal command questions. Each pair asks the same semantic question, with the evidence-grounded variant providing authoritative local command help.",
+    "questions": [
+      {
+        "id": "grep-general",
+        "pair_id": "grep",
+        "command": "grep",
+        "mode": "general_knowledge",
+        "prompt": "Which grep option supplies NUM lines of context before each matching line? Give the option and command syntax.",
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-B"
+        }
+      },
+      {
+        "id": "grep-evidence",
+        "pair_id": "grep",
+        "command": "grep",
+        "mode": "evidence_grounded",
+        "prompt": "Using only the grep --help output provided below, which option supplies NUM lines of context before each matching line? Give the option and command syntax.",
+        "evidence": {
+          "command": "grep --help",
+          "source": "local_command_help",
+          "file": "evidence/grep-help.txt"
+        },
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-B"
+        }
+      },
+      {
+        "id": "tar-general",
+        "pair_id": "tar",
+        "command": "tar",
+        "mode": "general_knowledge",
+        "prompt": "Which tar option changes to a specified directory before performing the archive operation? Give the option and command syntax.",
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-C"
+        }
+      },
+      {
+        "id": "tar-evidence",
+        "pair_id": "tar",
+        "command": "tar",
+        "mode": "evidence_grounded",
+        "prompt": "Using only the tar --help output provided below, which option changes to a specified directory before performing the archive operation? Give the option and command syntax.",
+        "evidence": {
+          "command": "tar --help",
+          "source": "local_command_help",
+          "file": "evidence/tar-help.txt"
+        },
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-C"
+        }
+      },
+      {
+        "id": "find-general",
+        "pair_id": "find",
+        "command": "find",
+        "mode": "general_knowledge",
+        "prompt": "Which find option limits the search to a specified maximum directory depth? Give the option and command syntax.",
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-maxdepth"
+        }
+      },
+      {
+        "id": "find-evidence",
+        "pair_id": "find",
+        "command": "find",
+        "mode": "evidence_grounded",
+        "prompt": "Using only the find --help output provided below, which option limits the search to a specified maximum directory depth? Give the option and command syntax.",
+        "evidence": {
+          "command": "find --help",
+          "source": "local_command_help",
+          "file": "evidence/find-help.txt"
+        },
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-maxdepth"
+        }
+      },
+      {
+        "id": "sed-general",
+        "pair_id": "sed",
+        "command": "sed",
+        "mode": "general_knowledge",
+        "prompt": "Which sed option edits the input files in place instead of writing the modified text only to standard output? Give the option and command syntax.",
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-i"
+        }
+      },
+      {
+        "id": "sed-evidence",
+        "pair_id": "sed",
+        "command": "sed",
+        "mode": "evidence_grounded",
+        "prompt": "Using only the sed --help output provided below, which option edits the input files in place instead of writing the modified text only to standard output? Give the option and command syntax.",
+        "evidence": {
+          "command": "sed --help",
+          "source": "local_command_help",
+          "file": "evidence/sed-help.txt"
+        },
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-i"
+        }
+      },
+      {
+        "id": "curl-general",
+        "pair_id": "curl",
+        "command": "curl",
+        "mode": "general_knowledge",
+        "prompt": "Which curl option specifies the HTTP request method to use? Give the option and command syntax.",
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-X"
+        }
+      },
+      {
+        "id": "curl-evidence",
+        "pair_id": "curl",
+        "command": "curl",
+        "mode": "evidence_grounded",
+        "prompt": "Using only the curl --help output provided below, which option specifies the request method to use? Give the option and command syntax.",
+        "evidence": {
+          "command": "curl --help",
+          "source": "local_command_help",
+          "file": "evidence/curl-help.txt"
+        },
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-X"
+        }
+      },
+      {
+        "id": "git-general",
+        "pair_id": "git",
+        "command": "git",
+        "mode": "general_knowledge",
+        "prompt": "Which git option causes Git to run as if it were started in a specified directory? Give the option and command syntax.",
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-C"
+        }
+      },
+      {
+        "id": "git-evidence",
+        "pair_id": "git",
+        "command": "git",
+        "mode": "evidence_grounded",
+        "prompt": "Using only the git --help output provided below, which option causes Git to run as if it were started in a specified directory? Give the option and command syntax.",
+        "evidence": {
+          "command": "git --help",
+          "source": "local_command_help",
+          "file": "evidence/git-help.txt"
+        },
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-C"
+        }
+      },
+      {
+        "id": "ffmpeg-general",
+        "pair_id": "ffmpeg",
+        "command": "ffmpeg",
+        "mode": "general_knowledge",
+        "prompt": "Which ffmpeg option prevents existing output files from being overwritten? Give the option and command syntax.",
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-n"
+        }
+      },
+      {
+        "id": "ffmpeg-evidence",
+        "pair_id": "ffmpeg",
+        "command": "ffmpeg",
+        "mode": "evidence_grounded",
+        "prompt": "Using only the ffmpeg -h output provided below, which option prevents existing output files from being overwritten? Give the option and command syntax.",
+        "evidence": {
+          "command": "ffmpeg -h",
+          "source": "local_command_help",
+          "file": "evidence/ffmpeg-help.txt"
+        },
+        "evaluation": {
+          "method": "expected_option",
+          "expected": "-n"
+        }
+      }
+    ]
+  },
+  "execution": {
+    "benchmark_id": "terminal-v1",
+    "benchmark_version": 1,
+    "timestamp_utc": "2026-09-26T19:08:32.986498+00:00",
+    "model": "Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
+    "model_path": "/models/Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
+    "model_alias": "/models/Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
+    "llama_cpp_build": "b11176-f805c57a2",
+    "context": 10240,
+    "max_tokens": 1024,
+    "temperature": 0.1,
+    "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
+    "system_prompt": "Ubuntu/Linux terminal and coding assistant. Focus on Python, Bash, SQL, data engineering, and analysis.\n\nBe concise and factual. Answer the user's question directly. Do not add unrelated advice, warnings, examples, or explanations unless useful.\n\nNever invent facts, commands, paths, variables, file contents, or execution results. Never claim a command was executed unless its output is provided.\n\nFor terminal commands:\n- Never emit emoji, Unicode block/box-drawing characters, terminal control sequences, or decorative symbols.\n- Mark potentially destructive commands with WARNING.\n- Prefer commands that validate their own result.\n\nFor provided files or piped command output:\n- Use the provided content as evidence.\n- Distinguish commands for searching from verified search results.\n- Claim a match or file content only when supported by the provided content.\n- If requested information is absent, say \"not found in provided input\".\n- When asked how to search, provide the command and example usage; do not imply it was executed.\n- If the provided input is insufficient, say what is missing instead of guessing.",
+    "system_prompt_sha256": "4dc24c138967f6223632ff50b43aa23e9028c32179e582dc268bceb98805f00f"
+  },
+  "results": [
+    {
+      "question_id": "grep-general",
+      "pair_id": "grep",
+      "command": "grep",
+      "mode": "general_knowledge",
+      "prompt": "Which grep option supplies NUM lines of context before each matching line? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-B"
+      },
+      "evidence": null,
+      "response": "The `grep` option that supplies `NUM` lines of context before each matching line is `-B NUM`.\n\n### Command syntax:\n```bash\ngrep -B NUM pattern file\n```\n\n### Example:\n```bash\ngrep -B 2 \"error\" logfile.txt\n```\nThis shows 2 lines of context before each line containing \"error\".",
+      "correct": true,
+      "prompt_tokens": 247,
+      "completion_tokens": 72,
+      "total_tokens": 319,
+      "elapsed_seconds": 21.44859985006042,
+      "completion_tokens_per_second": 3.3568624760276453,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "grep-evidence",
+      "pair_id": "grep",
+      "command": "grep",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the grep --help output provided below, which option supplies NUM lines of context before each matching line? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-B"
+      },
+      "evidence": {
+        "command": "grep --help",
+        "source": "local_command_help",
+        "file": "evidence/grep-help.txt"
+      },
+      "response": "The option that supplies NUM lines of context before each matching line is `-B NUM`.\n\nCommand syntax: `grep -B NUM pattern file`",
+      "correct": true,
+      "prompt_tokens": 256,
+      "completion_tokens": 29,
+      "total_tokens": 285,
+      "elapsed_seconds": 4.617293613962829,
+      "completion_tokens_per_second": 6.28073551837881,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "tar-general",
+      "pair_id": "tar",
+      "command": "tar",
+      "mode": "general_knowledge",
+      "prompt": "Which tar option changes to a specified directory before performing the archive operation? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-C"
+      },
+      "evidence": null,
+      "response": "The `--directory` option changes to a specified directory before performing the archive operation.\n\nCommand syntax:\n```\ntar --directory=/path/to/directory -cf archive.tar files...\n```\n\nExample:\n```\ntar --directory=/home/user/docs -cf docs.tar report.txt\n```\n\nThis archives `report.txt` from `/home/user/docs` into `docs.tar`.",
+      "correct": false,
+      "prompt_tokens": 248,
+      "completion_tokens": 76,
+      "total_tokens": 324,
+      "elapsed_seconds": 9.365665747085586,
+      "completion_tokens_per_second": 8.11474614323597,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "tar-evidence",
+      "pair_id": "tar",
+      "command": "tar",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the tar --help output provided below, which option changes to a specified directory before performing the archive operation? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-C"
+      },
+      "evidence": {
+        "command": "tar --help",
+        "source": "local_command_help",
+        "file": "evidence/tar-help.txt"
+      },
+      "response": "The option that changes to a specified directory before performing the archive operation is:\n\n`-C, --directory=DIR`\n\nCommand syntax:\n`tar -C DIR --create [other options] [files]`\n\nNote: The `--create` option is equivalent to `-c`. The `--directory` option (or `-C`) changes to the specified directory before performing the operation.",
+      "correct": true,
+      "prompt_tokens": 257,
+      "completion_tokens": 78,
+      "total_tokens": 335,
+      "elapsed_seconds": 9.485392706934363,
+      "completion_tokens_per_second": 8.223170343066297,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "find-general",
+      "pair_id": "find",
+      "command": "find",
+      "mode": "general_knowledge",
+      "prompt": "Which find option limits the search to a specified maximum directory depth? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-maxdepth"
+      },
+      "evidence": null,
+      "response": "The `find` option that limits the search to a specified maximum directory depth is `-maxdepth`.\n\n**Command syntax:**\n\n```bash\nfind /path/to/search -maxdepth N -name \"pattern\"\n```\n\n- `/path/to/search`: The starting directory for the search.\n- `N`: The maximum depth (number of levels below the starting directory).\n- `-name \"pattern\"`: Optional search criterion (e.g., file name pattern).\n\n**Example:**\n```bash\nfind /home/user -maxdepth 1 -name \"*.txt\"\n```\nThis searches only the `/home/user` directory (no subdirectories).",
+      "correct": true,
+      "prompt_tokens": 247,
+      "completion_tokens": 129,
+      "total_tokens": 376,
+      "elapsed_seconds": 15.930964905070141,
+      "completion_tokens_per_second": 8.09743796240144,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "find-evidence",
+      "pair_id": "find",
+      "command": "find",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the find --help output provided below, which option limits the search to a specified maximum directory depth? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-maxdepth"
+      },
+      "evidence": {
+        "command": "find --help",
+        "source": "local_command_help",
+        "file": "evidence/find-help.txt"
+      },
+      "response": "The option that limits the search to a specified maximum directory depth is `-maxdepth`.\n\nCommand syntax:  \n`find [path] [expression] -maxdepth levels`",
+      "correct": true,
+      "prompt_tokens": 256,
+      "completion_tokens": 35,
+      "total_tokens": 291,
+      "elapsed_seconds": 5.53690448612906,
+      "completion_tokens_per_second": 6.321221557583534,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "sed-general",
+      "pair_id": "sed",
+      "command": "sed",
+      "mode": "general_knowledge",
+      "prompt": "Which sed option edits the input files in place instead of writing the modified text only to standard output? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-i"
+      },
+      "evidence": null,
+      "response": "The `sed` option that edits input files in place is `-i`.\n\nCommand syntax:\n```bash\nsed -i 's/pattern/replacement/' filename\n```\n\nExample:\n```bash\nsed -i 's/foo/bar/' file.txt\n```\n\nThis command edits `file.txt` directly, replacing all occurrences of `foo` with `bar` in the file.\n\nWARNING: Using `-i` modifies the original file. Always back up important files before using this option.",
+      "correct": true,
+      "prompt_tokens": 254,
+      "completion_tokens": 99,
+      "total_tokens": 353,
+      "elapsed_seconds": 11.490625166101381,
+      "completion_tokens_per_second": 8.615719211872038,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "sed-evidence",
+      "pair_id": "sed",
+      "command": "sed",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the sed --help output provided below, which option edits the input files in place instead of writing the modified text only to standard output? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-i"
+      },
+      "evidence": {
+        "command": "sed --help",
+        "source": "local_command_help",
+        "file": "evidence/sed-help.txt"
+      },
+      "response": "The option that edits the input files in place is `-i`.\n\nCommand syntax:  \n`sed -i [SUFFIX] [SCRIPT] [FILE]`  \n\nIf SUFFIX is provided, it creates a backup of the original file with that suffix. Without SUFFIX, the original file is overwritten.",
+      "correct": true,
+      "prompt_tokens": 263,
+      "completion_tokens": 62,
+      "total_tokens": 325,
+      "elapsed_seconds": 7.752204990945756,
+      "completion_tokens_per_second": 7.9977245277199644,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "curl-general",
+      "pair_id": "curl",
+      "command": "curl",
+      "mode": "general_knowledge",
+      "prompt": "Which curl option specifies the HTTP request method to use? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-X"
+      },
+      "evidence": null,
+      "response": "The `curl` option that specifies the HTTP request method is `-X` or `--request`.\n\nCommand syntax:\n```\ncurl -X METHOD URL\n```\n\nWhere:\n- `METHOD` is the HTTP method (e.g., GET, POST, PUT, DELETE, etc.)\n- `URL` is the target endpoint\n\nExample:\n```\ncurl -X POST https://example.com/api/data\n```",
+      "correct": true,
+      "prompt_tokens": 245,
+      "completion_tokens": 83,
+      "total_tokens": 328,
+      "elapsed_seconds": 9.092650279868394,
+      "completion_tokens_per_second": 9.128251658789337,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "curl-evidence",
+      "pair_id": "curl",
+      "command": "curl",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the curl --help output provided below, which option specifies the request method to use? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-X"
+      },
+      "evidence": {
+        "command": "curl --help",
+        "source": "local_command_help",
+        "file": "evidence/curl-help.txt"
+      },
+      "response": "The option that specifies the request method to use is `-X` or `--request`.\n\nCommand syntax:  \n`curl -X <HTTP_METHOD> [URL]`  \n\nExample:  \n`curl -X POST https://example.com`",
+      "correct": true,
+      "prompt_tokens": 253,
+      "completion_tokens": 49,
+      "total_tokens": 302,
+      "elapsed_seconds": 6.119918023003265,
+      "completion_tokens_per_second": 8.00664319617045,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "git-general",
+      "pair_id": "git",
+      "command": "git",
+      "mode": "general_knowledge",
+      "prompt": "Which git option causes Git to run as if it were started in a specified directory? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-C"
+      },
+      "evidence": null,
+      "response": "The git option that causes Git to run as if it were started in a specified directory is `--git-dir`.\n\nCommand syntax:\n```\ngit --git-dir=/path/to/repo/.git [other options]\n```\n\nThis option specifies the path to the Git repository's `.git` directory, effectively making Git operate as if it were run from that directory.\n\nNote: You may also use `--work-tree` to specify the working tree directory, often used in conjunction with `--git-dir`.",
+      "correct": false,
+      "prompt_tokens": 251,
+      "completion_tokens": 102,
+      "total_tokens": 353,
+      "elapsed_seconds": 11.462890092050657,
+      "completion_tokens_per_second": 8.898279507254063,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "git-evidence",
+      "pair_id": "git",
+      "command": "git",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the git --help output provided below, which option causes Git to run as if it were started in a specified directory? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-C"
+      },
+      "evidence": {
+        "command": "git --help",
+        "source": "local_command_help",
+        "file": "evidence/git-help.txt"
+      },
+      "response": "The option that causes Git to run as if it were started in a specified directory is `--git-dir`.\n\nCommand syntax:\n```\ngit [--git-dir=<path>] [--work-tree=<path>] <command>\n```\n\nNote: The `--git-dir` option specifies the path to the Git repository's directory (e.g., `.git`). When used, Git will operate as if it were started in that directory. The `--work-tree` option can be used in conjunction to specify the working tree directory.",
+      "correct": false,
+      "prompt_tokens": 260,
+      "completion_tokens": 105,
+      "total_tokens": 365,
+      "elapsed_seconds": 13.206049157073721,
+      "completion_tokens_per_second": 7.9509017989500315,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "ffmpeg-general",
+      "pair_id": "ffmpeg",
+      "command": "ffmpeg",
+      "mode": "general_knowledge",
+      "prompt": "Which ffmpeg option prevents existing output files from being overwritten? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-n"
+      },
+      "evidence": null,
+      "response": "The ffmpeg option that prevents existing output files from being overwritten is `-n`.\n\nCommand syntax:\n```bash\nffmpeg -i input.mp4 -n output.mp4\n```\n\nThe `-n` option tells ffmpeg to not overwrite existing files. If the output file already exists, ffmpeg will exit with an error instead of overwriting it.",
+      "correct": true,
+      "prompt_tokens": 245,
+      "completion_tokens": 68,
+      "total_tokens": 313,
+      "elapsed_seconds": 8.441630924120545,
+      "completion_tokens_per_second": 8.055315449257726,
+      "finish_reason": "stop"
+    },
+    {
+      "question_id": "ffmpeg-evidence",
+      "pair_id": "ffmpeg",
+      "command": "ffmpeg",
+      "mode": "evidence_grounded",
+      "prompt": "Using only the ffmpeg -h output provided below, which option prevents existing output files from being overwritten? Give the option and command syntax.",
+      "evaluation": {
+        "method": "expected_option",
+        "expected": "-n"
+      },
+      "evidence": {
+        "command": "ffmpeg -h",
+        "source": "local_command_help",
+        "file": "evidence/ffmpeg-help.txt"
+      },
+      "response": "The option that prevents existing output files from being overwritten is `-n`.\n\nCommand syntax:  \n`ffmpeg -n [input options] -i input_file [output options] output_file`\n\nThis option tells ffmpeg to not overwrite existing output files.",
+      "correct": true,
+      "prompt_tokens": 254,
+      "completion_tokens": 49,
+      "total_tokens": 303,
+      "elapsed_seconds": 5.932759587885812,
+      "completion_tokens_per_second": 8.259225622432739,
+      "finish_reason": "stop"
+    }
+  ],
+  "aggregate": {
+    "questions": 14,
+    "correct": 11,
+    "accuracy": 0.7857142857142857,
+    "prompt_tokens": 3536,
+    "completion_tokens": 1036,
+    "total_tokens": 4572,
+    "elapsed_seconds": 139.88354953029193,
+    "completion_tokens_per_second": 7.406160363235943,
+    "mean_question_completion_tokens_per_second": 7.664731069510004
+  }
+}
