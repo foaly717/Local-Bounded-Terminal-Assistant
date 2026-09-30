@@ -14,4 +14,4 @@ done
 
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
 
-exec python3 "$SCRIPT_DIR/llm-client2.py" "$@"
+exec python3 "$SCRIPT_DIR/llm-client-vulkan.py" "$@"

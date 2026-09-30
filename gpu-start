@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+rm -f "${TMPDIR:-/tmp}/gpu-ask-vulkan-session.json"
+
+# llama.cpp server launcher — Intel Vulkan GPU offload
+# Isolated Docker network (172.20.0.100), persistent shader cache, strict validation.
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+
+MODELS_DIR="${LLM_MODELS_DIR:-/home/lincolnbrennan/agent-workspace/models/llms}"
+IMAGE="ghcr.io/ggml-org/llama.cpp:server-vulkan"
+
+# Operational parameters
+MEMORY_LIMIT="36g"
+CPU_LIMIT="8"
+THREADS="6"
+CONTEXT="16384"
+MAX_TOKENS="1536"
+GPU_LAYERS="64"
+VULKAN_DEVICE="Vulkan0"
+API_KEY="${LLM_API_KEY:-local-only-key}"
+
+STARTUP_TIMEOUT=180
+POLL_INTERVAL=2
+
+NETWORK_NAME="llama-isolated"
+STATIC_IP="172.20.0.100"
+CACHE_VOLUME="llama-vulkan-cache"
+
+cleanup_failed_start() {
+    echo "ERROR: Vulkan server validation failed; removing llama-local." >&2
+    docker rm -f llama-local >/dev/null 2>&1 || true
+}
+
+# Pre-flight checks (fail fast with descriptive errors)
+if ! docker info >/dev/null 2>&1; then
+    echo "ERROR: Docker daemon is not running or accessible." >&2
+    exit 1
+fi
+
+if [[ ! -e /dev/dri/renderD128 ]]; then
+    echo "ERROR: GPU render node /dev/dri/renderD128 missing." >&2
+    exit 1
+fi
+
+if [[ ! -d "$MODELS_DIR" ]]; then
+    echo "ERROR: Models directory missing: $MODELS_DIR" >&2
+    exit 1
+fi
+
+# Ensure internal Docker network exists with required subnet
+if docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
+    SUBNET=$(docker network inspect --format '{{(index .IPAM.Config 0).Subnet}}' "$NETWORK_NAME")
+    IS_INTERNAL=$(docker network inspect --format '{{.Internal}}' "$NETWORK_NAME")
+    if [[ "$SUBNET" != "172.20.0.0/16" || "$IS_INTERNAL" != "true" ]]; then
+        echo "ERROR: Network $NETWORK_NAME misconfigured (subnet: $SUBNET, internal: $IS_INTERNAL)." >&2
+        echo "Run: docker network rm $NETWORK_NAME" >&2
+        exit 1
+    fi
+else
+    echo "Creating isolated network $NETWORK_NAME (172.20.0.0/16)..."
+    docker network create --internal --subnet=172.20.0.0/16 "$NETWORK_NAME" >/dev/null
+fi
+
+# Ensure persistent Vulkan shader cache volume exists
+if ! docker volume inspect "$CACHE_VOLUME" >/dev/null 2>&1; then
+    echo "Creating persistent cache volume $CACHE_VOLUME..."
+    docker volume create "$CACHE_VOLUME" >/dev/null
+fi
+
+select_model() {
+    mapfile -t MODELS < <(
+        find -L "$MODELS_DIR" -maxdepth 1 -type f -name "*.gguf" -printf "%f\n" | sort
+    )
+
+    if [[ ${#MODELS[@]} -eq 0 ]]; then
+        echo "ERROR: No GGUF models found in $MODELS_DIR" >&2
+        exit 1
+    fi
+
+    echo "Available models:"
+    echo
+    local i
+    for i in "${!MODELS[@]}"; do
+        printf "[%d] %s\n" "$((i+1))" "${MODELS[$i]}"
+    done
+    echo
+
+    read -rp "Select model [1-${#MODELS[@]}]: " choice
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#MODELS[@]} )); then
+        echo "ERROR: Invalid selection" >&2
+        exit 1
+    fi
+
+    MODEL="${MODELS[$((choice-1))]}"
+}
+
+select_model
+
+# Terminate any existing instance
+docker rm -f llama-local >/dev/null 2>&1 || true
+
+# Launch container with render node access, read-only rootfs, and isolated network
+docker run -d \
+    --name llama-local \
+    --memory="$MEMORY_LIMIT" \
+    --cpus="$CPU_LIMIT" \
+    --pids-limit=128 \
+    --stop-timeout=30 \
+    --network "$NETWORK_NAME" \
+    --ip "$STATIC_IP" \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges:true \
+    --tmpfs /tmp:size=1g,noexec,nosuid \
+    --shm-size=1g \
+    -v "$CACHE_VOLUME:/root/.cache" \
+    --device /dev/dri/renderD128:/dev/dri/renderD128 \
+    -v "$MODELS_DIR:/models:ro" \
+    "$IMAGE" \
+    -m "/models/$MODEL" \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --api-key "$API_KEY" \
+    -c "$CONTEXT" \
+    -t "$THREADS" \
+    -tb "$THREADS" \
+    --n-gpu-layers "$GPU_LAYERS" \
+    --device "$VULKAN_DEVICE" \
+    --n-predict "$MAX_TOKENS" \
+    --cache-prompt \
+    -fa on \
+    --no-webui >/dev/null
+
+echo
+echo "Verifying Vulkan launch configuration..."
+
+CMD=$(docker inspect --format '{{json .Config.Cmd}}' llama-local)
+
+if [[ "$CMD" != *'"--device","'"$VULKAN_DEVICE"'"'* ]]; then
+    echo "ERROR: Running container is not configured with --device $VULKAN_DEVICE." >&2
+    echo "$CMD" >&2
+    cleanup_failed_start
+    exit 1
+fi
+
+if [[ "$CMD" != *'"--n-gpu-layers","'"$GPU_LAYERS"'"'* ]]; then
+    echo "ERROR: Running container is not configured with --n-gpu-layers $GPU_LAYERS." >&2
+    echo "$CMD" >&2
+    cleanup_failed_start
+    exit 1
+fi
+
+echo "Vulkan launch configuration verified."
+
+echo
+echo "Waiting for server ready state on http://$STATIC_IP:8080 (timeout: ${STARTUP_TIMEOUT}s)..."
+
+ELAPSED=0
+HEALTHY=false
+
+while (( ELAPSED < STARTUP_TIMEOUT )); do
+    STATUS=$(docker inspect --format '{{.State.Status}}' llama-local 2>/dev/null || echo "missing")
+
+    if [[ "$STATUS" != "running" ]]; then
+        echo "ERROR: Container exited unexpectedly (state: $STATUS)." >&2
+        docker logs --tail 50 llama-local >&2
+        cleanup_failed_start
+        exit 1
+    fi
+
+    if curl -fsS -m 1 "http://$STATIC_IP:8080/health" >/dev/null 2>&1; then
+        HEALTHY=true
+        break
+    fi
+
+    sleep "$POLL_INTERVAL"
+    ELAPSED=$((ELAPSED + POLL_INTERVAL))
+done
+
+if [[ "$HEALTHY" != "true" ]]; then
+    echo "ERROR: Server failed to reach HTTP readiness within ${STARTUP_TIMEOUT} seconds." >&2
+    docker logs --tail 50 llama-local >&2
+    cleanup_failed_start
+    exit 1
+fi
+
+echo "Server readiness verified."
+
+echo
+echo "Started llama.cpp with Intel Vulkan GPU offload:"
+echo "  model:         $MODEL"
+echo "  endpoint:      http://$STATIC_IP:8080"
+echo "  network:       $NETWORK_NAME (Internal/Isolated)"
+echo "  Vulkan device: $VULKAN_DEVICE (/dev/dri/renderD128)"
+echo "  shader cache:  $CACHE_VOLUME (Persistent)"
+echo "  GPU layers:    $GPU_LAYERS"
+echo "  memory:        $MEMORY_LIMIT"
+echo "  CPUs:          $CPU_LIMIT"
+echo "  threads:       $THREADS"
+echo "  context:       $CONTEXT"
+echo "  max tokens:    $MAX_TOKENS"
+exit 0
