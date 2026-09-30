@@ -1,0 +1,368 @@
+# Vulkan GPU Backend
+
+This repository contains a hardware-specific Vulkan deployment of the local `llama.cpp` server. It is an experimental/secondary execution path and is not the generic default configuration for the Local Bounded Terminal Assistant.
+
+The implementation was developed and tested on:
+
+* **Host:** ThinkPad X1 Carbon Gen 12
+* **OS:** Ubuntu 24.04.x
+* **GPU:** Intel Meteor Lake-P integrated graphics
+* **DRM render node:** `/dev/dri/renderD128`
+* **Backend:** Vulkan
+* **Server:** `llama.cpp` `server-vulkan` container image
+* **Docker network:** `llama-isolated`
+* **Container address:** `172.20.0.100`
+* **Server port:** `8080`
+* **Host port publication:** none
+
+The hardware and topology assumptions in this document are intentional. This implementation should not be assumed to work unchanged on another GPU, Linux graphics stack, Docker configuration, or host filesystem layout.
+
+## Architecture
+
+The Vulkan server runs inside a Docker container with an internal-only Docker network:
+
+```text
+Host
+ |
+ | Docker
+ v
+llama-local
+ |
+ | Vulkan
+ v
+/dev/dri/renderD128
+ |
+ v
+Intel GPU
+```
+
+The container is attached to the `llama-isolated` network with the static address:
+
+```text
+172.20.0.100
+```
+
+The OpenAI-compatible API is available inside that Docker network at:
+
+```text
+http://172.20.0.100:8080
+```
+
+The server is deliberately not published onto the host's `127.0.0.1` interface.
+
+This means clients that need to communicate with the server must have appropriate network access to the Docker network. The current `gpu-ask` and Vulkan benchmark tooling are designed around this topology.
+
+## Hardware-specific nature
+
+The Vulkan implementation is tied to the graphics hardware and device topology used during development.
+
+The launcher explicitly expects:
+
+```text
+/dev/dri/renderD128
+```
+
+and selects:
+
+```text
+Vulkan0
+```
+
+for llama.cpp.
+
+The current launcher also specifies a fixed number of GPU layers and resource limits based on the available hardware. These values are configuration for this environment, not universal Vulkan settings.
+
+A different Intel GPU, an AMD GPU, an NVIDIA GPU, or a different Linux graphics configuration may expose different DRM devices, Vulkan device names, driver requirements, memory characteristics, or supported features.
+
+For another machine, inspect its Vulkan and DRM configuration before attempting to reuse this launcher.
+
+## Launcher
+
+The primary launcher is:
+
+```text
+gpu-start
+```
+
+It starts the `llama.cpp` Vulkan server as the Docker container:
+
+```text
+llama-local
+```
+
+The current launcher establishes or validates:
+
+* Docker availability
+* the expected DRM render device
+* the model directory
+* the `llama-isolated` Docker network
+* the expected internal subnet
+* the persistent Vulkan shader-cache volume
+* the container security configuration
+* the selected Vulkan device
+* the configured GPU-layer count
+* server health after startup
+
+The model directory is mounted read-only into the container.
+
+The container also uses a read-only root filesystem, drops Linux capabilities, disables privilege escalation, and does not publish the API to a host port.
+
+## Starting the server
+
+From the repository's executable directory:
+
+```bash
+./gpu-start
+```
+
+The launcher selects the configured GGUF model according to its current model-selection behavior and starts the Vulkan server.
+
+The resulting endpoint is:
+
+```text
+http://172.20.0.100:8080
+```
+
+The endpoint is intended for internal Docker-network access rather than direct host access.
+
+## Interactive queries
+
+The corresponding terminal wrapper is:
+
+```text
+gpu-ask
+```
+
+Example:
+
+```bash
+./gpu-ask "Explain the difference between a process and a thread in Linux."
+```
+
+The wrapper invokes:
+
+```text
+llm-client-vulkan.py
+```
+
+The Vulkan client communicates directly with:
+
+```text
+http://172.20.0.100:8080/v1/chat/completions
+```
+
+and obtains server/model information from:
+
+```text
+http://172.20.0.100:8080/props
+```
+
+The client supports the local API-key convention used by the launcher and the current request/session behavior implemented in `llm-client-vulkan.py`.
+
+## Benchmarking
+
+The Vulkan-specific benchmark is:
+
+```text
+benchmarking/vulkan-benchmark
+```
+
+Its client is:
+
+```text
+benchmarking/vulkan-client.py
+```
+
+The benchmark communicates with the same internal Vulkan endpoint:
+
+```text
+http://172.20.0.100:8080
+```
+
+It obtains the active model information dynamically from the server rather than assuming a particular GGUF model.
+
+Run the benchmark after starting the GPU server:
+
+```bash
+./benchmarking/vulkan-benchmark
+```
+
+Benchmark output is written to the benchmark results directory according to the benchmark implementation.
+
+Generated benchmark results and model files are not intended to become repository contents.
+
+## Resource configuration
+
+The current launcher is configured for the development machine and should be considered hardware-specific.
+
+Current settings include:
+
+```text
+Container memory limit: 36 GiB
+CPU limit:              8 CPUs
+llama.cpp threads:      6
+Context size:           16384
+Maximum generation:     1536 tokens
+GPU layers:             64
+Vulkan device:          Vulkan0
+```
+
+These values were selected for the current system and model workload. They should not be copied to another machine without checking available RAM, GPU resources, Vulkan behavior, and model requirements.
+
+## Model files
+
+Model files are supplied externally and are not stored in this repository.
+
+The launcher expects GGUF models in the configured model directory.
+
+The repository deliberately does not contain the model weights themselves.
+
+This separation keeps large model artifacts out of Git while allowing the launcher and benchmark implementation to remain version-controlled.
+
+## Stopping the server
+
+The corresponding lifecycle command is:
+
+```bash
+./llm-stop
+```
+
+The Vulkan server runs as the Docker container:
+
+```text
+llama-local
+```
+
+and can therefore also be inspected through normal Docker commands when troubleshooting.
+
+Useful inspection commands include:
+
+```bash
+docker ps --filter name=llama-local
+```
+
+```bash
+docker inspect llama-local
+```
+
+```bash
+docker logs llama-local
+```
+
+## Verifying Vulkan
+
+The launcher expects the Intel DRM render node to exist:
+
+```bash
+ls -l /dev/dri/renderD128
+```
+
+The running container can be inspected for the configured Vulkan device and llama.cpp invocation:
+
+```bash
+docker inspect llama-local
+```
+
+The server's health endpoint is:
+
+```text
+http://172.20.0.100:8080/health
+```
+
+The model/server properties endpoint is:
+
+```text
+http://172.20.0.100:8080/props
+```
+
+These endpoints are reachable according to the Docker network topology rather than being published as host services.
+
+## Relationship to the generic client
+
+The repository retains the existing generic client:
+
+```text
+llm-client2.py
+```
+
+The Vulkan implementation uses a separate client:
+
+```text
+llm-client-vulkan.py
+```
+
+This distinction is intentional.
+
+The generic client and the Vulkan client do not assume the same endpoint topology. The Vulkan client explicitly targets the internal Docker address used by this hardware-specific deployment.
+
+Likewise:
+
+```text
+gpu-ask
+```
+
+is the Vulkan-oriented terminal wrapper, while the existing non-Vulkan commands remain separate.
+
+## Security and network properties
+
+The current Vulkan launcher is designed around a local, isolated Docker deployment.
+
+Relevant properties include:
+
+* no host port publication for the llama.cpp API
+* an internal Docker network
+* read-only model mount
+* read-only container root filesystem
+* dropped Linux capabilities
+* disabled privilege escalation
+* explicitly supplied GPU device access
+* local API authentication convention
+* no intended outbound Internet connectivity from the isolated network
+
+These properties describe the current launcher configuration. They should be revalidated if the Docker topology, network configuration, host integration, or GPU device configuration changes.
+
+## Porting this implementation
+
+This implementation should be treated as a reference for a Vulkan-backed local deployment rather than a portable one-command installer.
+
+For another machine, the following may need to change:
+
+1. DRM device path.
+2. Vulkan device selection.
+3. GPU-layer configuration.
+4. CPU and memory limits.
+5. Context and generation limits.
+6. Docker GPU/device permissions.
+7. Vulkan driver availability.
+8. Docker network configuration.
+9. Model location.
+10. llama.cpp image/version.
+
+The most important distinction is that **Vulkan is the backend, not the hardware abstraction contract**. A working Vulkan configuration on one GPU does not establish that the same device path, device name, layer count, memory allocation, or container configuration will work elsewhere.
+
+## Current status
+
+The Vulkan implementation is a working hardware-specific execution path for the development system.
+
+It provides:
+
+```text
+gpu-start
+    |
+    v
+llama.cpp server-vulkan
+    |
+    v
+Intel Vulkan GPU
+    |
+    v
+172.20.0.100:8080
+    |
+    +---- gpu-ask
+    |
+    +---- llm-client-vulkan.py
+    |
+    +---- benchmarking/vulkan-benchmark
+```
+
+The implementation is maintained separately from the generic local assistant path so that hardware-specific Vulkan assumptions remain explicit rather than becoming implicit requirements of the base project.
